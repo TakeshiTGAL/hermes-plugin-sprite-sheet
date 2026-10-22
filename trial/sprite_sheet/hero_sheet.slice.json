@@ -1,0 +1,64 @@
+{
+  "ok": true,
+  "source": "sprite_sheet/hero_sheet.png",
+  "as_of": 1792642514,
+  "png_text": {
+    "License": "Trial sheet drawn for this design. No third-party artwork.",
+    "Source": "local walk cycle"
+  },
+  "license": "Trial sheet drawn for this design. No third-party artwork.",
+  "rights": "Slicing copies rectangles and creates no new rights.",
+  "slicing_creates_rights": false,
+  "kind": "sprite",
+  "file": "sprite_sheet/hero_sheet.png",
+  "cell_w": 16,
+  "cell_h": 32,
+  "margin": [
+    0,
+    0
+  ],
+  "spacing": [
+    0,
+    0
+  ],
+  "origin": "top_left",
+  "columns": 4,
+  "rows": 1,
+  "frames": 4,
+  "fps": 8,
+  "durations": [
+    1,
+    2,
+    1,
+    1
+  ],
+  "extrude_px": 0,
+  "trim": false,
+  "trim_bounds": [],
+  "hframes": 4,
+  "vframes": 1,
+  "names": [
+    "walk_0",
+    "walk_1",
+    "walk_2",
+    "walk_3"
+  ],
+  "ppu": 32,
+  "paths": [
+    "sprite_sheet/hero_sheet.spriteframes.tres",
+    "sprite_sheet/hero_sheet.png.meta",
+    "sprite_sheet/hero_sheet.png.import",
+    "sprite_sheet/hero_sheet.slice.json",
+    "sprite_sheet/hero_sheet_stage.gd",
+    "sprite_sheet/hero_sheet_stage.tscn"
+  ],
+  "foot": [
+    8,
+    32
+  ],
+  "animation": "walk",
+  "animations": [
+    "walk"
+  ],
+  "frame_offset": []
+}

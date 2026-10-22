@@ -1,0 +1,159 @@
+{
+  "ok": true,
+  "source": "sprite_sheet/tiles.png",
+  "as_of": 1792642514,
+  "png_text": {
+    "License": "Trial sheet drawn for this design. No third-party artwork.",
+    "Source": "local shore tiles"
+  },
+  "license": "Trial sheet drawn for this design. No third-party artwork.",
+  "rights": "Slicing copies rectangles and creates no new rights.",
+  "slicing_creates_rights": false,
+  "kind": "tileset",
+  "file": "sprite_sheet/tiles.extruded.png",
+  "cell_w": 32,
+  "cell_h": 32,
+  "margin": [
+    0,
+    0
+  ],
+  "spacing": [
+    1,
+    1
+  ],
+  "origin": "top_left",
+  "columns": 8,
+  "rows": 3,
+  "frames": 24,
+  "fps": 8,
+  "durations": [],
+  "extrude_px": 1,
+  "trim": false,
+  "trim_bounds": [],
+  "hframes": 8,
+  "vframes": 3,
+  "names": [
+    "grass",
+    "water",
+    "sand",
+    "path"
+  ],
+  "ppu": 32,
+  "paths": [
+    "sprite_sheet/tiles.tileset.tres",
+    "sprite_sheet/tiles.extruded.png.meta",
+    "sprite_sheet/tiles.png.import",
+    "sprite_sheet/tiles.slice.json",
+    "sprite_sheet/tiles.grass.asset",
+    "sprite_sheet/tiles.grass.asset.meta",
+    "sprite_sheet/tiles.water.asset",
+    "sprite_sheet/tiles.water.asset.meta",
+    "sprite_sheet/tiles.sand.asset",
+    "sprite_sheet/tiles.sand.asset.meta",
+    "sprite_sheet/tiles.path.asset",
+    "sprite_sheet/tiles.path.asset.meta",
+    "sprite_sheet/tiles.extruded.png",
+    "sprite_sheet/tiles.extruded.png.import"
+  ],
+  "animation": "",
+  "unity_water": "animated_tile",
+  "coords": {
+    "grass": [
+      7,
+      1
+    ],
+    "water": [
+      0,
+      2
+    ],
+    "sand": [
+      3,
+      2
+    ],
+    "path": [
+      4,
+      2
+    ]
+  },
+  "solid": {
+    "grass": true,
+    "water": false,
+    "sand": true,
+    "path": true
+  },
+  "tile_animation": {
+    "water": {
+      "frames": 3,
+      "fps": 4.0,
+      "columns": 3
+    }
+  },
+  "tile_peering": {
+    "grass": {
+      "0": [
+        0,
+        0
+      ],
+      "1": [
+        1,
+        0
+      ],
+      "2": [
+        2,
+        0
+      ],
+      "3": [
+        3,
+        0
+      ],
+      "4": [
+        4,
+        0
+      ],
+      "5": [
+        5,
+        0
+      ],
+      "6": [
+        6,
+        0
+      ],
+      "7": [
+        7,
+        0
+      ],
+      "8": [
+        0,
+        1
+      ],
+      "9": [
+        1,
+        1
+      ],
+      "10": [
+        2,
+        1
+      ],
+      "11": [
+        3,
+        1
+      ],
+      "12": [
+        4,
+        1
+      ],
+      "13": [
+        5,
+        1
+      ],
+      "14": [
+        6,
+        1
+      ],
+      "15": [
+        7,
+        1
+      ]
+    }
+  }
+}

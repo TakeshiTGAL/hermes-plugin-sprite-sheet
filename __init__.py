@@ -1,7 +1,10 @@
 """Sprite sheet, tileset, and local placement tools. They do not launch Godot or Unity."""
 
+import hashlib
 import importlib.util
 import json
+import threading
+import time
 from pathlib import Path
 
 INSPECT_DESCRIPTION = (
@@ -89,41 +92,71 @@ def _bad(key):
     )
 
 
-def _session_block():
-    """Refuse a write when nobody can approve it. Fail closed when the check cannot load."""
-    try:
-        approval_context = importlib.import_module("tools.approval_context")
-        approval = importlib.import_module("tools.approval")
-    except Exception:
-        return "Could not check cron, yolo, or approvals, so nothing was written."
-    try:
-        if approval_context._is_cron_approval_context():
-            return "Refused in cron. Nothing was written."
-        if approval._yolo_active():
-            return "Refused while yolo is on. Nothing was written."
-        if approval_context._get_approval_mode() == "off":
-            return "Refused while approvals are off. Nothing was written."
-        if approval_context._is_single_query_approval_context():
-            return "Refused in a single-query session. Nothing was written."
-        if approval_context._is_unattended_platform_approval_context():
-            return "Refused in an unattended session. Nothing was written."
-    except Exception:
-        return "Could not check cron, yolo, or approvals, so nothing was written."
-    return ""
+_WRITE_TOOLS = frozenset({"slice_grid", "place_kit"})
+_STASH_LOCK = threading.Lock()
+_STASH = {}
+_STASH_TTL = 600
 
 
-def _blocked_reply(reason):
-    return json.dumps(
-        {
-            "ok": False,
-            "error": reason,
-            "next": "Use an attended chat with approvals on. Nothing was written.",
-            "next_ja": "承認が聞ける会話で使う。まだ書いていない。",
-            "wrote": False,
-            "paths": [],
-        },
-        ensure_ascii=False,
+def _stash_key(tool_name, payload, ids):
+    # The whole call, not a few fields: an approval for one plan never covers another
+    # (another animation, cell size, replace flag, or a key added later), and one
+    # session's approval never covers another session or task.
+    fields = {str(k): payload[k] for k in payload}
+    fields["project"] = str(Path(str(payload["project"])).resolve())
+    return (
+        tool_name,
+        json.dumps(fields, sort_keys=True, default=str),
+        str(ids.get("session_id") or ""),
+        str(ids.get("task_id") or ""),
     )
+
+
+def _file_fingerprint(project, rel, paths):
+    digest = hashlib.sha256()
+    source = Path(project) / str(rel)
+    try:
+        if source.is_file() and not source.is_symlink():
+            digest.update(source.read_bytes())
+        else:
+            digest.update(b"-")
+    except OSError:
+        digest.update(b"-")
+    for item in paths:
+        digest.update(b"\0")
+        digest.update(str(item).encode())
+        target = Path(project) / str(item)
+        try:
+            if target.is_file() and not target.is_symlink():
+                digest.update(target.read_bytes())
+            else:
+                digest.update(b"-")
+        except OSError:
+            digest.update(b"-")
+    return digest.hexdigest()
+
+
+def _hook_message(preview):
+    paths = [str(item) for item in (preview.get("paths") or [])]
+    named = str(preview.get("approval") or "")
+    if named and "\n" not in named and "`" not in named and len(paths) <= 8:
+        return named
+    shown = paths[:4]
+    lead = "replace" if named.startswith("replace ") else "write"
+    extra = " …" if len(paths) > 4 else ""
+    return f"{lead} {len(paths)} files: {' '.join(shown)}{extra}"
+
+
+def _halt(preview, error, nxt, nxt_ja):
+    reply = dict(preview)
+    reply["ok"] = False
+    reply["wrote"] = False
+    reply["isError"] = True
+    reply["error"] = error
+    reply["next"] = nxt
+    reply["next_ja"] = nxt_ja
+    reply["paths"] = []
+    return _contract().dump_reply(reply)
 
 
 def _common(args):
@@ -190,35 +223,124 @@ def _foot(args):
     return (-1 if fx is None else int(fx), -1 if fy is None else int(fy))
 
 
+def _slice_call(payload):
+    common = _common(payload)
+    durations = payload.get("durations")
+    if durations is not None:
+        durations = [float(item) for item in durations]
+    tile_names = payload.get("tile_names")
+    if tile_names is not None:
+        tile_names = [str(item) for item in tile_names]
+    return dict(
+        common,
+        fps=8 if payload.get("fps") is None else int(payload["fps"]),
+        durations=durations,
+        trim=_flag(payload, "trim"),
+        foot=_foot(payload),
+        names=_names(payload.get("names")),
+        tile_names=tile_names,
+        tile_coords=_coords(payload.get("tile_coords")),
+        tile_solid=payload.get("tile_solid"),
+        tile_anim=payload.get("tile_anim"),
+        tile_peering=_peering(payload.get("tile_peering")),
+        write=_flag(payload, "write", True),
+        emit_scene=_flag(payload, "emit_scene", True),
+        replace=_flag(payload, "replace"),
+        animation=str(payload.get("animation") or "walk"),
+        guid=str(payload.get("guid") or ""),
+        ppu=_optional_int(payload, "ppu"),
+        tileset_rel=str(payload.get("tileset_rel") or ""),
+    )
+
+
+def _place_call(payload):
+    kind = str(payload.get("kind") or "")
+    if kind not in ("walk", "shore", "glb", "music", "voice", "sfx"):
+        raise ValueError("kind")
+    return dict(
+        project=Path(str(payload["project"])),
+        rel=str(payload["path"]),
+        kind=kind,
+        write=_flag(payload, "write", True),
+        replace=_flag(payload, "replace"),
+    )
+
+
+def _dry_preview(tool_name, payload):
+    contract = _contract()
+    if tool_name == "slice_grid":
+        return contract.slice_grid(**_slice_call(payload), dry_run=True)
+    if tool_name == "place_kit":
+        return contract.place_kit(**_place_call(payload), dry_run=True)
+    return None
+
+
+def _on_pre_tool_call(tool_name="", args=None, **kwargs):
+    if tool_name not in _WRITE_TOOLS:
+        return None
+    # Every writer call in this session and task starts clean. A preview kept for a call that
+    # was refused, blocked by another plugin, or later rewritten by a modify directive can never
+    # be used. Other rooms keep their own previews while they wait for an answer.
+    room = (str(kwargs.get("session_id") or ""), str(kwargs.get("task_id") or ""))
+    with _STASH_LOCK:
+        for key in [k for k in _STASH if k[2:] == room]:
+            del _STASH[key]
+    try:
+        payload = _args(args)
+        if not _flag(payload, "write", True):
+            return None
+        preview = _dry_preview(tool_name, payload)
+    except Exception:
+        return None
+    if not preview or not preview.get("ok") or not preview.get("approval"):
+        return None
+    project = Path(str(payload["project"]))
+    rel = str(payload["path"])
+    named = str(preview.get("approval") or "")
+    fp = _file_fingerprint(project, rel, preview.get("paths") or [])
+    with _STASH_LOCK:
+        _STASH[_stash_key(tool_name, payload, kwargs)] = (named, fp, time.monotonic())
+    # rule_key per plan: Hermes keeps session and always under plugin_rule:<rule_key>.
+    # Without it Hermes uses the tool name, and one "always" would cover every later plan.
+    plan = hashlib.sha256(_stash_key(tool_name, payload, {})[1].encode()).hexdigest()[:16]
+    return {"action": "approve", "message": _hook_message(preview), "rule_key": f"{tool_name}:{plan}"}
+
+
+def _commit(tool_name, payload, preview, again, ids):
+    contract = _contract()
+    if not preview.get("ok") or not preview.get("approval"):
+        return contract.dump_reply(preview)
+    key = _stash_key(tool_name, payload, ids)
+    with _STASH_LOCK:
+        stashed = _STASH.pop(key, None)
+    if stashed is None:
+        return _halt(
+            preview,
+            "The write was not approved, or a newer call replaced its preview. Nothing was written.",
+            "Call the tool again and approve it on the Hermes approval screen. Nothing was written.",
+            nxt_ja="Hermes の承認画面で書いてよいか答える。まだ書いていない。",
+        )
+    named, fp, made = stashed
+    if time.monotonic() - made > _STASH_TTL:
+        return _halt(
+            preview,
+            "The approval is too old. Nothing was written.",
+            "Call the tool again and approve it. Nothing was written.",
+            nxt_ja="承認が古い。もう一度呼んで承認する。まだ書いていない。",
+        )
+    current = _file_fingerprint(Path(str(payload["project"])), str(payload["path"]), preview.get("paths") or [])
+    if named != str(preview.get("approval") or "") or fp != current:
+        return _halt(
+            preview,
+            "The files changed after the preview. Nothing was written.",
+            "Call the tool again so the approval line matches the files. Nothing was written.",
+            nxt_ja="ファイルが下見のあとで変わった。もう一度呼ぶ。まだ書いていない。",
+        )
+    return contract.dump_reply(again())
+
+
 def register(ctx) -> None:
     contract = _contract()
-
-    def _commit(preview, again):
-        if not preview.get("ok") or not preview.get("approval"):
-            return contract.dump_reply(preview)
-        reason = _session_block()
-        if reason:
-            return _blocked_reply(reason)
-        try:
-            prompt = importlib.import_module("tools.approval_prompt")
-        except Exception:
-            return _blocked_reply("Could not check cron, yolo, or approvals, so nothing was written.")
-        try:
-            choice = prompt.prompt_dangerous_approval(
-                preview["approval"],
-                "cut-sprite-sheet",
-                allow_permanent=False,
-                allow_session=False,
-            )
-        except Exception:
-            return _blocked_reply("Could not check cron, yolo, or approvals, so nothing was written.")
-        if str(choice) != "once":
-            preview = dict(preview)
-            preview["wrote"] = False
-            preview["next"] = "The approval was not accepted. Nothing was written."
-            preview["next_ja"] = "承認されなかった。まだ書いていない。"
-            return contract.dump_reply(preview)
-        return contract.dump_reply(again())
 
     def _inspect(args, **_kwargs):
         try:
@@ -231,58 +353,23 @@ def register(ctx) -> None:
             return _bad(exc.args[0] if exc.args else "argument")
         return contract.dump_reply(reply)
 
-    def _slice(args, **_kwargs):
+    def _slice(args, **kwargs):
         try:
             payload = _args(args)
-            common = _common(payload)
-            durations = payload.get("durations")
-            if durations is not None:
-                durations = [float(item) for item in durations]
-            tile_names = payload.get("tile_names")
-            if tile_names is not None:
-                tile_names = [str(item) for item in tile_names]
-            call = dict(
-                common,
-                fps=8 if payload.get("fps") is None else int(payload["fps"]),
-                durations=durations,
-                trim=_flag(payload, "trim"),
-                foot=_foot(payload),
-                names=_names(payload.get("names")),
-                tile_names=tile_names,
-                tile_coords=_coords(payload.get("tile_coords")),
-                tile_solid=payload.get("tile_solid"),
-                tile_anim=payload.get("tile_anim"),
-                tile_peering=_peering(payload.get("tile_peering")),
-                write=_flag(payload, "write", True),
-                emit_scene=_flag(payload, "emit_scene", True),
-                replace=_flag(payload, "replace"),
-                animation=str(payload.get("animation") or "walk"),
-                guid=str(payload.get("guid") or ""),
-                ppu=_optional_int(payload, "ppu"),
-                tileset_rel=str(payload.get("tileset_rel") or ""),
-            )
+            call = _slice_call(payload)
             preview = contract.slice_grid(**call, dry_run=True)
         except (KeyError, ValueError, TypeError) as exc:
             return _bad(exc.args[0] if exc.args else "argument")
-        return _commit(preview, lambda: contract.slice_grid(**call, dry_run=False))
+        return _commit("slice_grid", payload, preview, lambda: contract.slice_grid(**call, dry_run=False), kwargs)
 
-    def _place(args, **_kwargs):
+    def _place(args, **kwargs):
         try:
             payload = _args(args)
-            kind = str(payload.get("kind") or "")
-            if kind not in ("walk", "shore", "glb", "music", "voice", "sfx"):
-                raise ValueError("kind")
-            call = dict(
-                project=Path(str(payload["project"])),
-                rel=str(payload["path"]),
-                kind=kind,
-                write=_flag(payload, "write", True),
-                replace=_flag(payload, "replace"),
-            )
+            call = _place_call(payload)
             preview = contract.place_kit(**call, dry_run=True)
         except (KeyError, ValueError, TypeError) as exc:
             return _bad(exc.args[0] if exc.args else "argument")
-        return _commit(preview, lambda: contract.place_kit(**call, dry_run=False))
+        return _commit("place_kit", payload, preview, lambda: contract.place_kit(**call, dry_run=False), kwargs)
 
     grid = {
         "type": "object",
@@ -381,3 +468,4 @@ def register(ctx) -> None:
             "tool_search in English for inspect_grid, slice_grid, or place_kit before using web_search."
         ),
     )
+    ctx.register_hook("pre_tool_call", _on_pre_tool_call)

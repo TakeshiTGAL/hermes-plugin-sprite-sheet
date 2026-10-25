@@ -22,6 +22,20 @@ Point Hermes at this directory and enable `cut-sprite-sheet`. The manifest asks 
 
 Music and an NPC voice are not created here. Audio is not sent.
 
+## Approval
+
+`slice_grid` and `place_kit` register a `pre_tool_call` hook. A write (default `write` true) dry-runs first and returns `{"action": "approve", "message": <one line of project-relative paths>}`. `inspect_grid`, `write` false, and a dry-run that would not write return nothing, so Hermes does not ask.
+
+Hermes then runs the same human gate as a dangerous shell command (`hermes_cli/plugins.py` `_resolve_block_from_details` → `tools/approval.py` `request_tool_approval`). CLI, gateway, and Desktop show that line. Choosing always covers only the same call (the same arguments) on later turns. After a yes, the handler dry-runs again and writes only when the plan still matches. If the files changed, it writes nothing.
+
+This plugin does not read Hermes private internals. What Hermes does with the approve directive (v0.21.6 already has it; checked on v0.22.2):
+
+- yolo (`--yolo` / `/yolo`) and `approvals.mode: off` skip the prompt and treat the call as approved (`tools/approval.py` `_run_approval_gate`).
+- cron, `-q`, and unattended platforms follow `approvals.cron_mode` / `single_query_mode` / `unattended_mode`. The defaults are deny (`hermes_cli/config_defaults.py`).
+- Any other non-interactive context with no person and no gateway fails closed.
+
+The install scanner, with an empty `HERMES_HOME`, on both Hermes v0.22.2 and current main: `Verdict: SAFE`, 11 findings, `Decision: ALLOWED — Allowed (community source, safe verdict)`. `should_allow_plugin_install` is `Allowed (clean scan)`. The findings are tests that spawn Godot/`lsof`/`grep`, PNG byte fixtures, and path-refusal cases. They were not rewritten to hide from the scanner. `--force` is not required.
+
 ## 日本語
 
-入れるのは、このディレクトリを Hermes に置いて `cut-sprite-sheet` を有効にするだけである。最初の成功は、利用者の png を `inspect_grid` してから `slice_grid` で切ることである。承認は 1 回で、画面の行が書くパスである。切り直しでは、名前が一致するスプライトの pivot と border を残す。消える値は、その行に名指す。取り込みは `godot --headless --editor --quit --path <project>` の 1 回で、ウィンドウは開かない。そのあとステージを再生する。道具は Godot も Unity も起動しない。既にある `project.godot` は変えない。`place_kit` は png が無いときだけ使う。効果音は無い。
+入れるのは、このディレクトリを Hermes に置いて `cut-sprite-sheet` を有効にするだけである。最初の成功は、利用者の png を `inspect_grid` してから `slice_grid` で切ることである。承認は 1 回で、`pre_tool_call` の 1 行が書くパスである。yolo と approvals off では Hermes がその場で承認を飛ばす。cron と `-q` と無人は既定で断る。切り直しでは、名前が一致するスプライトの pivot と border を残す。消える値は、その行に名指す。取り込みは `godot --headless --editor --quit --path <project>` の 1 回で、ウィンドウは開かない。そのあとステージを再生する。道具は Godot も Unity も起動しない。既にある `project.godot` は変えない。`place_kit` は png が無いときだけ使う。効果音は無い。

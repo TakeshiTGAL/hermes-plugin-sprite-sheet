@@ -555,9 +555,8 @@ def output_atomic() -> None:
     )
 
 
-def overwrite_routes(ctx, calls, fake_prompt) -> None:
+def overwrite_routes(ctx) -> None:
     """One check per rewrite route. Each check shows what an existing file would lose."""
-    sys.modules["tools.approval_context"]._is_cron_approval_context = lambda: False
     source = Path(C.__file__).read_text(encoding="utf-8")
     found = [line.split("# route:", 1)[1].strip() for line in source.splitlines() if "# route:" in line]
     order = [
@@ -797,8 +796,6 @@ def overwrite_routes(ctx, calls, fake_prompt) -> None:
     preview_line = preview.get("approval") or ""
     hero_sha = hashlib.sha256(hero_png.read_bytes()).hexdigest()
     shore_sha = hashlib.sha256(shore_png.read_bytes()).hexdigest()
-    calls.clear()
-    fake_prompt.choice = "deny"
     denied = json.loads(
         ctx.tools["place_kit"]["handler"](
             {"project": str(placed), "path": "sprite_sheet/hero.png", "kind": "walk", "replace": True}
@@ -806,14 +803,11 @@ def overwrite_routes(ctx, calls, fake_prompt) -> None:
     )
     denied_ok = (
         denied.get("wrote") is False
+        and denied.get("isError") is True
         and hero_tres.read_text(encoding="utf-8") == tres_before
-        and len(calls) == 1
-        and "; hand" in calls[0]["line"]
-        and '"speed": 12.0' in calls[0]["line"]
     )
     hero_tres.write_text(tres_before + "`no`\n", encoding="utf-8")
     blocked = C.place_kit(placed, "sprite_sheet/hero.png", kind="walk", write=True, replace=True)
-    fake_prompt.choice = "once"
     check(
         "route_sprite_tres",
         first_place.get("wrote") is True
@@ -1530,8 +1524,8 @@ def main() -> None:
         and C.IMPORT_CMD in source_text,
         "readme",
     )
-    check("design_margin0", "余白か間隔があるシートだけ" not in DESIGN, "line")
-    readme = DESIGN[DESIGN.index("## README に回すこと") :]
+    check("design_margin0", "only sheets with margin or spacing" not in DESIGN, "line")
+    readme = DESIGN[DESIGN.index("## What goes in the README") :]
     for item in ("fix_alpha_border", "spriteID", "peering", "--probe", "spriteExtrude", "uid", "32", "Full Rect", "internalIDToNameTable"):
         check(f"readme_{item}", item in readme, item)
     for banned in ("この本", "this book", "takeshitgal", ".harness", "loop.wav", "Set cell to 16 or 32", "pip install"):
@@ -1765,11 +1759,11 @@ def main() -> None:
     check(
         "design_sprite_id",
         "0800000000000000" in readme
-        and "スプライト名の MD4 ではない" in DESIGN
-        and "spriteID` はスプライト名の MD4" not in DESIGN,
+        and "not the MD4 of the sprite name" in DESIGN
+        and "spriteID` is the MD4 of the sprite name" not in DESIGN,
         "suffix",
     )
-    check("design_float", "地面に届かなければ終了コード 2" not in DESIGN, "warn")
+    check("design_float", "exit code 2 if it does not meet the ground" not in DESIGN, "warn")
     check(
         "stage_doc",
         "Every frame must meet that line." not in source_text
@@ -1796,7 +1790,6 @@ def main() -> None:
     check("plugin_no_env", "os.environ" not in plugin_py and "getenv" not in plugin_py, "env")
     check("no_confirm_arg", "confirm" not in plugin_py, "approval screen")
     import importlib.util
-    import types
 
     spec = importlib.util.spec_from_file_location("sprite_sheet_plugin", SHIP / "__init__.py")
     plugin = importlib.util.module_from_spec(spec)
@@ -1807,6 +1800,7 @@ def main() -> None:
     class Ctx:
         def __init__(self):
             self.tools = {}
+            self.hooks = {}
 
         def register_tool(self, name, toolset, schema, handler):
             self.tools[name] = {"schema": schema, "handler": handler}
@@ -1814,8 +1808,12 @@ def main() -> None:
         def register_skill(self, name, path, description=""):
             self.skill = description
 
+        def register_hook(self, name, callback):
+            self.hooks.setdefault(name, []).append(callback)
+
     ctx = Ctx()
     plugin.register(ctx)
+    check("pre_tool_call_hook", ctx.hooks.get("pre_tool_call") == [plugin._on_pre_tool_call], str(ctx.hooks))
     check("three_tools", set(ctx.tools) == {"inspect_grid", "slice_grid", "place_kit"}, str(set(ctx.tools)))
     check(
         "inspect_schema_optional_cell",
@@ -1851,38 +1849,22 @@ def main() -> None:
         blank.get("error", ""),
     )
 
-    calls = []
-    approval_context = types.ModuleType("tools.approval_context")
-    approval_mod = types.ModuleType("tools.approval")
-    prompt_mod = types.ModuleType("tools.approval_prompt")
-    approval_context._is_cron_approval_context = lambda: False
-    approval_context._get_approval_mode = lambda: "manual"
-    approval_context._is_single_query_approval_context = lambda: False
-    approval_context._is_unattended_platform_approval_context = lambda: False
-    approval_mod._yolo_active = lambda: False
-
-    def fake_prompt(command, description, timeout_seconds=None, allow_permanent=True, approval_callback=None, *, allow_session=True, smart_denied=False, title=None):
-        calls.append({"line": command, "allow_permanent": allow_permanent, "allow_session": allow_session})
-        return fake_prompt.choice
-
-    fake_prompt.choice = "once"
-    prompt_mod.prompt_dangerous_approval = fake_prompt
-    sys.modules["tools.approval_context"] = approval_context
-    sys.modules["tools.approval"] = approval_mod
-    sys.modules["tools.approval_prompt"] = prompt_mod
-
     place_dir = Path("/tmp/ga_contract_place")
     fresh(place_dir)
-    fake_prompt.choice = "once"
-    placed = json.loads(ctx.tools["place_kit"]["handler"]({"project": str(place_dir), "path": "sprite_sheet/hero.png", "kind": "walk"}))
+    place_args = {"project": str(place_dir), "path": "sprite_sheet/hero.png", "kind": "walk"}
+    hooked = plugin._on_pre_tool_call("place_kit", place_args)
+    check(
+        "place_hook_approve",
+        isinstance(hooked, dict) and hooked.get("action") == "approve" and "project.godot" in (hooked.get("message") or ""),
+        str(hooked),
+    )
+    placed = json.loads(ctx.tools["place_kit"]["handler"](place_args))
     check(
         "place_once",
         placed["ok"]
         and placed.get("wrote") is True
-        and len(calls) == 1
-        and calls[0]["allow_permanent"] is False
-        and calls[0]["allow_session"] is False
-        and calls[0]["line"] == placed["approval"]
+        and hooked.get("message")
+        and "\n" not in hooked.get("message")
         and "\n" not in placed["approval"]
         and "`" not in placed["approval"]
         and len(placed["approval"]) < 1500
@@ -1898,18 +1880,25 @@ def main() -> None:
         and "hero_tiles.png.meta" not in placed["approval"]
         and (place_dir / "sprite_sheet" / "hero_tiles.extruded.png.meta").is_file()
         and not (place_dir / "sprite_sheet" / "hero_tiles.png.meta").exists(),
-        str(calls),
+        placed.get("error", "ok"),
     )
     print(f"PLACE_APPROVAL chars={len(placed['approval'])} paths={len(placed['paths'])}")
-    calls.clear()
-    fake_prompt.choice = "deny"
     denied = json.loads(ctx.tools["place_kit"]["handler"]({"project": str(place_dir), "path": "sprite_sheet/denied_shore.png", "kind": "shore"}))
-    check("place_deny", denied.get("wrote") is False and not (place_dir / "sprite_sheet" / "denied_shore.png").exists() and len(calls) == 1, denied.get("next", ""))
-    calls.clear()
-    approval_context._is_cron_approval_context = lambda: True
-    croned = json.loads(ctx.tools["place_kit"]["handler"]({"project": str(place_dir), "path": "sprite_sheet/cron_shore.png", "kind": "shore"}))
-    check("place_cron", croned["ok"] is False and "cron" in croned["error"] and not calls and not (place_dir / "sprite_sheet" / "cron_shore.png").exists(), croned["error"])
-    approval_context._is_cron_approval_context = lambda: False
+    check(
+        "place_deny",
+        denied.get("wrote") is False
+        and denied.get("isError") is True
+        and not (place_dir / "sprite_sheet" / "denied_shore.png").exists(),
+        denied.get("next", ""),
+    )
+    cron_hook = plugin._on_pre_tool_call("place_kit", {"project": str(place_dir), "path": "sprite_sheet/cron_shore.png", "kind": "shore"})
+    check(
+        "place_cron",
+        isinstance(cron_hook, dict)
+        and cron_hook.get("action") == "approve"
+        and not (place_dir / "sprite_sheet" / "cron_shore.png").exists(),
+        str(cron_hook),
+    )
     music = json.loads(ctx.tools["place_kit"]["handler"]({"project": str(place_dir), "path": "sprite_sheet/song.png", "kind": "music"}))
     check("place_music", music["ok"] is False and music.get("wrote") is False and "not send audio" in music["next"], music.get("next", ""))
 
@@ -2558,7 +2547,7 @@ def main() -> None:
     )
 
     output_symlinks()
-    overwrite_routes(ctx, calls, fake_prompt)
+    overwrite_routes(ctx)
     output_atomic()
 
     check("no_godot_dir", not (ROOT / ".godot").exists() and not (SHIP / ".godot").exists(), "absent")

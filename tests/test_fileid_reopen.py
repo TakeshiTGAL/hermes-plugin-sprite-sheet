@@ -41,6 +41,10 @@ def check_fileids() -> str:
     return str(len(KEPT))
 
 
+def test_fileids() -> None:
+    assert check_fileids() == "4"
+
+
 def main() -> None:
     count = check_fileids()
     print(f"PASS fileid_reopen {count}")

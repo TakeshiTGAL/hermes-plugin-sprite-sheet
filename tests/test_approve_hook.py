@@ -75,7 +75,8 @@ def _slice_args(project: Path, write=True, replace=False):
     }
 
 
-def test_write_returns_approve(hermes, plugin, tmp_path):
+def test_write_returns_approve(hermes, plugin, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
     project = _project(tmp_path)
     details = hermes._get_pre_tool_call_directive_details("slice_grid", _slice_args(project))
     assert details.action == "approve"
@@ -111,7 +112,8 @@ def test_denied_gate_writes_nothing(hermes, plugin, tmp_path):
     assert not extra.exists()
 
 
-def test_mismatch_after_preview_writes_nothing(plugin, tmp_path):
+def test_mismatch_after_preview_writes_nothing(plugin, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
     project = _project(tmp_path)
 
     class Ctx:
@@ -195,7 +197,8 @@ def test_handler_without_a_hook_writes_nothing(plugin, tmp_path):
     assert not (project / "sprite_sheet" / "hero_sheet.spriteframes.tres").exists()
 
 
-def test_preview_for_one_animation_does_not_cover_another(plugin, tmp_path):
+def test_preview_for_one_animation_does_not_cover_another(plugin, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
     project = _project(tmp_path)
     tools = _handlers(plugin)
     walk = {**_slice_args(project), "animation": "walk"}
@@ -206,7 +209,8 @@ def test_preview_for_one_animation_does_not_cover_another(plugin, tmp_path):
     assert not (project / "sprite_sheet" / "hero_sheet.spriteframes.tres").exists()
 
 
-def test_silent_call_rewritten_to_a_write_finds_no_preview(plugin, tmp_path):
+def test_silent_call_rewritten_to_a_write_finds_no_preview(plugin, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
     # An earlier write was refused (its preview stayed), then a write:false call is
     # rewritten into that same write by another plugin's modify directive.
     project = _project(tmp_path)
@@ -219,7 +223,8 @@ def test_silent_call_rewritten_to_a_write_finds_no_preview(plugin, tmp_path):
     assert not (project / "sprite_sheet" / "hero_sheet.spriteframes.tres").exists()
 
 
-def test_preview_from_another_session_is_not_used(plugin, tmp_path):
+def test_preview_from_another_session_is_not_used(plugin, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
     project = _project(tmp_path)
     tools = _handlers(plugin)
     args = _slice_args(project)
@@ -229,6 +234,7 @@ def test_preview_from_another_session_is_not_used(plugin, tmp_path):
 
 
 def test_old_preview_is_refused(plugin, tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
     project = _project(tmp_path)
     tools = _handlers(plugin)
     args = _slice_args(project)
@@ -239,7 +245,8 @@ def test_old_preview_is_refused(plugin, tmp_path, monkeypatch):
     assert body.get("wrote") is False
 
 
-def test_approved_preview_writes_once(plugin, tmp_path):
+def test_approved_preview_writes_once(plugin, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
     project = _project(tmp_path)
     tools = _handlers(plugin)
     args = _slice_args(project)
@@ -250,7 +257,8 @@ def test_approved_preview_writes_once(plugin, tmp_path):
     assert again.get("wrote") is False
 
 
-def test_rule_key_is_per_plan(hermes, tmp_path):
+def test_rule_key_is_per_plan(hermes, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
     project = _project(tmp_path)
     walk = {**_slice_args(project), "animation": "walk"}
     attack = {**_slice_args(project), "animation": "attack"}
@@ -483,7 +491,8 @@ def test_yolo_does_not_write_a_cron_job(hermes, plugin, monkeypatch, tmp_path):
     assert not (project / "sprite_sheet" / "hero_sheet.spriteframes.tres").exists()
 
 
-def test_another_room_keeps_its_preview(plugin, tmp_path):
+def test_another_room_keeps_its_preview(plugin, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
     project = _project(tmp_path)
     other = tmp_path / "other"
     (other / "sprite_sheet").mkdir(parents=True)
@@ -494,3 +503,158 @@ def test_another_room_keeps_its_preview(plugin, tmp_path):
     assert plugin._on_pre_tool_call("slice_grid", _slice_args(other), session_id="b", task_id="t2")
     body = json.loads(tools["slice_grid"](args, session_id="a", task_id="t1"))
     assert body.get("wrote") is True
+
+
+def _drop_person(monkeypatch):
+    for name in (
+        "HERMES_INTERACTIVE",
+        "HERMES_GATEWAY_SESSION",
+        "HERMES_EXEC_ASK",
+        "HERMES_CRON_SESSION",
+        "HERMES_SINGLE_QUERY_SESSION",
+        "HERMES_SESSION_PLATFORM",
+        "HERMES_PLUGIN_HOST_PROCESS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_no_person_blocks_before_the_saved_line(hermes, monkeypatch, tmp_path):
+    _drop_person(monkeypatch)
+    project = _project(tmp_path)
+    details = hermes._get_pre_tool_call_directive_details("slice_grid", _slice_args(project))
+    assert details.action == "block"
+    assert "no person" in (details.message or "")
+
+
+def test_turn_interactive_flag_can_approve_without_the_environment(hermes, monkeypatch, tmp_path):
+    _drop_person(monkeypatch)
+    import importlib
+
+    mod = importlib.import_module("tools." + "approval" + "_context")
+    token = mod.set_hermes_interactive_context(True)
+    try:
+        project = _project(tmp_path)
+        details = hermes._get_pre_tool_call_directive_details("slice_grid", _slice_args(project))
+        assert details.action == "approve"
+    finally:
+        mod.reset_hermes_interactive_context(token)
+
+
+def test_blank_interactive_context_masks_the_environment(hermes, monkeypatch, tmp_path):
+    _drop_person(monkeypatch)
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+    import contextvars
+
+    var = contextvars.ContextVar("hermes_interactive", default=None)
+    token = var.set("")
+    try:
+        project = _project(tmp_path)
+        details = hermes._get_pre_tool_call_directive_details("slice_grid", _slice_args(project))
+        assert details.action == "block"
+        assert "no person" in (details.message or "")
+    finally:
+        var.reset(token)
+
+
+def test_always_then_no_person_writes_nothing(hermes, plugin, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+    project = _project(tmp_path)
+    args = {**_slice_args(project, replace=True), "animation": "walk"}
+    ids = {"session_id": "room", "task_id": "task"}
+    tools = _approve_always_then(hermes, plugin, project, args, ids)
+    target = project / "sprite_sheet" / "hero_sheet.spriteframes.tres"
+    original = target.read_bytes()
+    target.write_bytes(original + b"; tamper\n")
+    stuck = _snapshot(project)
+    _drop_person(monkeypatch)
+    block, _modified = hermes._dispatch_pre_tool_call_hooks(
+        "slice_grid", args, session_id="bare", task_id="bare"
+    )
+    if not block:
+        json.loads(tools["slice_grid"](args, session_id="bare", task_id="bare"))
+    assert block and "BLOCKED" in block and "no person" in block
+    assert _snapshot(project) == stuck
+    assert target.read_bytes().endswith(b"; tamper\n")
+
+
+def _tileset_project(tmp_path: Path) -> Path:
+    project = tmp_path / "game"
+    (project / "sprite_sheet").mkdir(parents=True)
+    shutil.copy(TRIAL / "sprite_sheet" / "tiles.png", project / "sprite_sheet" / "tiles.png")
+    (project / "sprite_sheet" / "tiles.png.meta").write_text("; stale-hand\n", encoding="utf-8")
+    return project
+
+
+def _tileset_args(project: Path, contract) -> dict:
+    return {
+        "project": str(project),
+        "path": "sprite_sheet/tiles.png",
+        "cell_w": 32,
+        "cell_h": 32,
+        "kind": "tileset",
+        "tile_names": ["grass", "water", "sand", "path"],
+        "tile_coords": contract.shore_coords(),
+        "tile_anim": {"water": {"frames": 3, "fps": 4}},
+        "tile_peering": contract.shore_peering(),
+        "write": True,
+        "replace": True,
+        "emit_scene": False,
+    }
+
+
+def test_unlink_name_stays_when_the_path_list_is_long(hermes, plugin, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+    project = _tileset_project(tmp_path)
+    contract = plugin._contract()
+    args = _tileset_args(project, contract)
+    preview = contract.slice_grid(**plugin._slice_call(args), dry_run=True)
+    paths = [str(item) for item in (preview.get("paths") or [])]
+    assert len(paths) > 8
+    assert "tiles.png.meta" not in " ".join(paths)
+    assert preview.get("deletes") == ["sprite_sheet/tiles.png.meta"]
+    details = hermes._get_pre_tool_call_directive_details("slice_grid", args)
+    assert details.action == "approve"
+    assert "tiles.png.meta" in (details.message or "")
+    assert "\n" not in (details.message or "")
+
+
+def test_unlink_rule_key_changes_every_call(hermes, plugin, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+    project = _tileset_project(tmp_path)
+    args = _tileset_args(project, plugin._contract())
+    first = hermes._get_pre_tool_call_directive_details("slice_grid", args, session_id="a", task_id="1")
+    second = hermes._get_pre_tool_call_directive_details("slice_grid", args, session_id="b", task_id="2")
+    assert first.action == second.action == "approve"
+    assert first.rule_key != second.rule_key
+
+
+def test_always_does_not_cover_the_next_unlink(hermes, plugin, monkeypatch, tmp_path):
+    from tools.terminal_tool import set_approval_callback
+
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+    project = _tileset_project(tmp_path)
+    args = _tileset_args(project, plugin._contract())
+    meta = project / "sprite_sheet" / "tiles.png.meta"
+    asked = []
+
+    def answer(*_a, **_k):
+        asked.append(1)
+        return "always" if len(asked) == 1 else "deny"
+
+    set_approval_callback(answer)
+    try:
+        ids = {"session_id": "one", "task_id": "t"}
+        block, _modified = hermes._dispatch_pre_tool_call_hooks("slice_grid", args, **ids)
+        assert block is None
+        body = json.loads(_handlers(plugin)["slice_grid"](args, **ids))
+        assert body.get("wrote") is True
+        assert not meta.exists()
+        meta.write_text("; stale-hand\n", encoding="utf-8")
+        block2, _modified = hermes._dispatch_pre_tool_call_hooks(
+            "slice_grid", args, session_id="two", task_id="t2"
+        )
+        assert block2 and "BLOCKED" in block2
+        assert meta.is_file()
+        assert len(asked) == 2
+    finally:
+        set_approval_callback(None)

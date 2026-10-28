@@ -94,7 +94,45 @@ def unattended_reason() -> str | None:
     platform = session_flag("HERMES_SESSION_PLATFORM").strip().lower()
     if platform in _UNATTENDED_PLATFORMS:
         return "an unattended " + platform + " session"
+    # Hermes honors a saved always line before fail_closed_when_no_human.
+    # A later process with none of the marks above still writes unless we refuse here.
+    # An interactive CLI binds `hermes_interactive` on the turn. It does not always
+    # copy that flag into the process environment (ACP sessions in particular).
+    if not _person_present():
+        return "a non-interactive session with no person"
     return None
+
+
+def _interactive_cli() -> bool:
+    """True when this turn can show a CLI approval.
+
+    A set context value wins, including an explicit empty string, which masks
+    the process environment. No set value falls back to HERMES_INTERACTIVE.
+    """
+    decided = False
+    on = False
+    for value in _context_values("hermes_interactive"):
+        if value is None:
+            continue
+        decided = True
+        if isinstance(value, str):
+            if value.strip().lower() in _TRUTHY:
+                on = True
+        elif bool(value):
+            on = True
+    if decided:
+        return on
+    return _flag_on("HERMES_INTERACTIVE")
+
+
+def _person_present() -> bool:
+    """True when a person or a gateway can answer this turn."""
+    if _interactive_cli():
+        return True
+    if _flag_on("HERMES_GATEWAY_SESSION") or _flag_on("HERMES_EXEC_ASK"):
+        return True
+    platform = session_flag("HERMES_SESSION_PLATFORM").strip().lower()
+    return bool(platform) and platform not in _UNATTENDED_PLATFORMS
 
 
 def unattended_block(reason: str) -> dict:

@@ -1852,6 +1852,7 @@ def main() -> None:
     place_dir = Path("/tmp/ga_contract_place")
     fresh(place_dir)
     place_args = {"project": str(place_dir), "path": "sprite_sheet/hero.png", "kind": "walk"}
+    os.environ["HERMES_INTERACTIVE"] = "1"
     hooked = plugin._on_pre_tool_call("place_kit", place_args)
     check(
         "place_hook_approve",
@@ -1899,6 +1900,19 @@ def main() -> None:
         and not (place_dir / "sprite_sheet" / "cron_shore.png").exists(),
         str(cron_hook),
     )
+    os.environ.pop("HERMES_INTERACTIVE", None)
+    bare_hook = plugin._on_pre_tool_call(
+        "place_kit", {"project": str(place_dir), "path": "sprite_sheet/bare.png", "kind": "shore"}
+    )
+    check(
+        "place_no_person",
+        isinstance(bare_hook, dict)
+        and bare_hook.get("action") == "block"
+        and "no person" in (bare_hook.get("message") or "")
+        and not (place_dir / "sprite_sheet" / "bare.png").exists(),
+        str(bare_hook),
+    )
+    os.environ["HERMES_INTERACTIVE"] = "1"
     music = json.loads(ctx.tools["place_kit"]["handler"]({"project": str(place_dir), "path": "sprite_sheet/song.png", "kind": "music"}))
     check("place_music", music["ok"] is False and music.get("wrote") is False and "not send audio" in music["next"], music.get("next", ""))
 

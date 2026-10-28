@@ -1723,7 +1723,8 @@ def reply_has_pixels(reply: dict) -> bool:
 
 
 def dump_reply(reply: dict) -> str:
-    return json.dumps(reply, ensure_ascii=False, indent=2)
+    public = {key: value for key, value in reply.items() if key != "deletes"}
+    return json.dumps(public, ensure_ascii=False, indent=2)
 
 
 def _png_error(kind: str) -> PngError:
@@ -3143,6 +3144,9 @@ def slice_grid(
         stale_rel = f"{base}{stem}.png.meta"
         if stale_rel != meta_rel and (project / stale_rel).is_file():
             planned.append((stale_rel, None))  # route: stale_meta
+    deletes = [rel for rel, new in planned if new is None]
+    if deletes:
+        inspected["deletes"] = deletes
     if sink is not None:
         sink.extend(planned)
         inspected["approval"] = body

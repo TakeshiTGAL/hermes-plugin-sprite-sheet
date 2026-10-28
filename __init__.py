@@ -3,6 +3,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -157,13 +158,19 @@ def _file_fingerprint(project, rel, paths):
 
 def _hook_message(preview):
     paths = [str(item) for item in (preview.get("paths") or [])]
+    deletes = [str(item) for item in (preview.get("deletes") or [])]
     named = str(preview.get("approval") or "")
-    if named and "\n" not in named and "`" not in named and len(paths) <= 8:
+    safe = bool(named) and "\n" not in named and "\r" not in named and "`" not in named
+    # The dry-run line already names a file this call unlinks. Show that line
+    # even when more than 8 paths would otherwise be shortened to the first four.
+    if safe and all(item in named for item in deletes):
         return named
     shown = paths[:4]
     lead = "replace" if named.startswith("replace ") else "write"
     extra = " …" if len(paths) > 4 else ""
-    return f"{lead} {len(paths)} files: {' '.join(shown)}{extra}"
+    missing = [item for item in deletes if item not in shown]
+    tail = (" delete " + " ".join(missing)) if missing else ""
+    return f"{lead} {len(paths)} files: {' '.join(shown)}{extra}{tail}"
 
 
 def _halt(preview, error, nxt, nxt_ja):
@@ -327,6 +334,10 @@ def _on_pre_tool_call(tool_name="", args=None, **kwargs):
     # rule_key per plan: Hermes keeps session and always under plugin_rule:<rule_key>.
     # Without it Hermes uses the tool name, and one "always" would cover every later plan.
     plan = hashlib.sha256(_stash_key(tool_name, payload, {})[1].encode()).hexdigest()[:16]
+    # A plan that unlinks a file must not keep always. A new nonce each call
+    # means the saved line never matches the next call.
+    if preview.get("deletes"):
+        plan = hashlib.sha256(plan.encode() + os.urandom(8)).hexdigest()[:16]
     return {"action": "approve", "message": _hook_message(preview), "rule_key": f"{tool_name}:{plan}"}
 
 

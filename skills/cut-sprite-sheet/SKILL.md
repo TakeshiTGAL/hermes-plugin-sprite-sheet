@@ -27,7 +27,7 @@ If you already know the name, call `tool_describe` for `inspect_grid`, `slice_gr
 
 One write, one line, from the `pre_tool_call` hook. Hermes puts that line on the approval screen. The line lists the paths the call will create. A long list is a count and the first paths. No backticks and no line break. `replace` true starts the line with `replace`. A replace keeps each sprite's alignment, pivot, and border when the name still matches. fileID and guid stay on the same calculation. A sprite name that will not match, and any `.tres` line the new text will not keep, is named on that same line. If those values cannot be named, nothing is written. When nothing would be dropped, a line that would not fit is one list file, and the files are still written. If even that one line does not fit, nothing is written.
 
-`inspect_grid` and `write` false do not ask. After a yes, the handler checks the preview again and writes nothing if the files changed. Choosing always covers only the same call (the same arguments) on later turns. Hermes yolo and approvals off skip the prompt. Cron, `-q`, and unattended sessions default to deny.
+`inspect_grid` and `write` false do not ask. After a yes, the handler checks the preview again and writes nothing if the files changed. Choosing always covers only the same call (the same arguments) on later turns when a person is present. Hermes yolo and approvals off skip the prompt in that case. Cron, `-q`, and unattended sessions default to deny. After always, cron, hermes -q, webhook, and the plugin host still write nothing.
 
 ## When a call fails
 

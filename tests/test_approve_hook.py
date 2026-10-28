@@ -315,6 +315,174 @@ def test_always_covers_only_the_same_plan(hermes, plugin, monkeypatch, tmp_path)
         set_approval_callback(None)
 
 
+def _snapshot(project: Path) -> dict:
+    found = {}
+    for path in sorted(project.rglob("*")):
+        if path.is_file() and not path.is_symlink():
+            found[str(path.relative_to(project))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return found
+
+
+def _approve_always_then(hermes, plugin, project, args, ids):
+    from tools.terminal_tool import set_approval_callback
+
+    set_approval_callback(lambda *_a, **_k: "always")
+    try:
+        first, _modified = hermes._dispatch_pre_tool_call_hooks("slice_grid", args, **ids)
+        assert first is None
+        tools = _handlers(plugin)
+        written = json.loads(tools["slice_grid"](args, **ids))
+        assert written.get("wrote") is True
+        return tools
+    finally:
+        set_approval_callback(None)
+
+
+def test_always_then_cron_context_writes_nothing(hermes, plugin, monkeypatch, tmp_path):
+    """The scheduler sets HERMES_CRON_SESSION on a ContextVar and not in the process environment.
+
+    After always, Hermes would honor the saved line before its own denial. The same plan must not write.
+    """
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+    for name in (
+        "HERMES_CRON_SESSION",
+        "HERMES_SINGLE_QUERY_SESSION",
+        "HERMES_SESSION_PLATFORM",
+        "HERMES_PLUGIN_HOST_PROCESS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    project = _project(tmp_path)
+    args = {**_slice_args(project, replace=True), "animation": "walk"}
+    ids = {"session_id": "room", "task_id": "task"}
+    tools = _approve_always_then(hermes, plugin, project, args, ids)
+    before = _snapshot(project)
+    from gateway.session_context import _VAR_MAP
+
+    token = _VAR_MAP["HERMES_CRON_SESSION"].set("1")
+    try:
+        block, _modified = hermes._dispatch_pre_tool_call_hooks("slice_grid", args, **ids)
+        if not block:
+            json.loads(tools["slice_grid"](args, **ids))
+    finally:
+        _VAR_MAP["HERMES_CRON_SESSION"].reset(token)
+    assert block and "BLOCKED" in block and "always" in block
+    assert _snapshot(project) == before
+
+
+def test_always_then_cron_mark_without_env_writes_nothing(hermes, plugin, monkeypatch, tmp_path):
+    from cron.execution_identity import enter_cron_execution, exit_cron_execution
+
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+    monkeypatch.delenv("HERMES_CRON_SESSION", raising=False)
+    project = _project(tmp_path)
+    args = {**_slice_args(project, replace=True), "animation": "walk"}
+    ids = {"session_id": "mark", "task_id": "task"}
+    tools = _approve_always_then(hermes, plugin, project, args, ids)
+    before = _snapshot(project)
+    attendance = plugin._attendance()
+    attendance.bind_cron_reader(
+        __import__("cron.execution_identity", fromlist=["current_cron_execution"]).current_cron_execution
+    )
+    token = enter_cron_execution(
+        {"id": "job", "name": "cut"},
+        "exec-1",
+        {"source": "builtin", "started_at": "2026-10-28T08:00:00Z"},
+    )
+    try:
+        block, _modified = hermes._dispatch_pre_tool_call_hooks("slice_grid", args, **ids)
+        if not block:
+            json.loads(tools["slice_grid"](args, **ids))
+    finally:
+        exit_cron_execution(token)
+        plugin._attendance().bind_cron_reader(None)
+    assert block and "BLOCKED" in block
+    assert _snapshot(project) == before
+
+
+def test_always_then_single_query_env_writes_nothing(hermes, plugin, monkeypatch, tmp_path):
+    # hermes chat -q assigns the process environment in cli_single_query.py. There is no ContextVar for it.
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+    monkeypatch.delenv("HERMES_CRON_SESSION", raising=False)
+    project = _project(tmp_path)
+    args = {**_slice_args(project, replace=True), "animation": "walk"}
+    ids = {"session_id": "query", "task_id": "task"}
+    tools = _approve_always_then(hermes, plugin, project, args, ids)
+    before = _snapshot(project)
+    monkeypatch.setenv("HERMES_SINGLE_QUERY_SESSION", "1")
+    block, _modified = hermes._dispatch_pre_tool_call_hooks("slice_grid", args, **ids)
+    if not block:
+        json.loads(tools["slice_grid"](args, **ids))
+    assert block and "BLOCKED" in block
+    assert _snapshot(project) == before
+
+
+def test_always_then_webhook_context_writes_nothing(hermes, plugin, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+    monkeypatch.delenv("HERMES_CRON_SESSION", raising=False)
+    monkeypatch.delenv("HERMES_SESSION_PLATFORM", raising=False)
+    project = _project(tmp_path)
+    args = {**_slice_args(project, replace=True), "animation": "walk"}
+    ids = {"session_id": "hook", "task_id": "task"}
+    tools = _approve_always_then(hermes, plugin, project, args, ids)
+    before = _snapshot(project)
+    from gateway.session_context import _VAR_MAP
+
+    token = _VAR_MAP["HERMES_SESSION_PLATFORM"].set("webhook")
+    try:
+        block, _modified = hermes._dispatch_pre_tool_call_hooks("slice_grid", args, **ids)
+        if not block:
+            json.loads(tools["slice_grid"](args, **ids))
+    finally:
+        _VAR_MAP["HERMES_SESSION_PLATFORM"].reset(token)
+    assert block and "BLOCKED" in block
+    assert _snapshot(project) == before
+
+
+def test_always_then_plugin_host_writes_nothing(hermes, plugin, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+    monkeypatch.delenv("HERMES_CRON_SESSION", raising=False)
+    project = _project(tmp_path)
+    args = {**_slice_args(project, replace=True), "animation": "walk"}
+    ids = {"session_id": "host", "task_id": "task"}
+    tools = _approve_always_then(hermes, plugin, project, args, ids)
+    before = _snapshot(project)
+    monkeypatch.setenv("HERMES_PLUGIN_HOST_PROCESS", "1")
+    block, _modified = hermes._dispatch_pre_tool_call_hooks("slice_grid", args, **ids)
+    if not block:
+        json.loads(tools["slice_grid"](args, **ids))
+    assert block and "BLOCKED" in block
+    assert _snapshot(project) == before
+
+
+def test_dry_run_under_cron_stays_silent(hermes, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_CRON_SESSION", "1")
+    project = _project(tmp_path)
+    details = hermes._get_pre_tool_call_directive_details("slice_grid", _slice_args(project, write=False))
+    assert details.action is None
+
+
+def test_yolo_does_not_write_a_cron_job(hermes, plugin, monkeypatch, tmp_path):
+    import tools.approval as approval
+
+    monkeypatch.setattr(approval, "_YOLO_MODE_FROZEN", True)
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+    monkeypatch.delenv("HERMES_CRON_SESSION", raising=False)
+    project = _project(tmp_path)
+    args = _slice_args(project, replace=True)
+    ids = {"session_id": "yolo", "task_id": "task"}
+    from gateway.session_context import _VAR_MAP
+
+    token = _VAR_MAP["HERMES_CRON_SESSION"].set("1")
+    try:
+        block, _modified = hermes._dispatch_pre_tool_call_hooks("slice_grid", args, **ids)
+        if not block:
+            json.loads(_handlers(plugin)["slice_grid"](args, **ids))
+    finally:
+        _VAR_MAP["HERMES_CRON_SESSION"].reset(token)
+    assert block and "BLOCKED" in block
+    assert not (project / "sprite_sheet" / "hero_sheet.spriteframes.tres").exists()
+
+
 def test_another_room_keeps_its_preview(plugin, tmp_path):
     project = _project(tmp_path)
     other = tmp_path / "other"

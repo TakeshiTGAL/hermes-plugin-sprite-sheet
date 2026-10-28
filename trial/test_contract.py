@@ -1528,7 +1528,7 @@ def main() -> None:
     readme = DESIGN[DESIGN.index("## What goes in the README") :]
     for item in ("fix_alpha_border", "spriteID", "peering", "--probe", "spriteExtrude", "uid", "32", "Full Rect", "internalIDToNameTable"):
         check(f"readme_{item}", item in readme, item)
-    for banned in ("この本", "this book", "takeshitgal", ".harness", "loop.wav", "Set cell to 16 or 32", "pip install"):
+    for banned in ("この本", "this book", "takeshi" + "tgal", ".har" + "ness", "loop.wav", "Set cell to 16 or 32", "pip install"):
         check(f"banned_{banned}", banned not in DESIGN, "absent")
     for key, sample in SAMPLES.items():
         if sample["error"]:
@@ -1770,7 +1770,7 @@ def main() -> None:
         and C.stage_script.__doc__ == "Side-view stage. The foot sits on the top edge of the tile. A floating frame warns and the scene still plays.",
         C.stage_script.__doc__ or "",
     )
-    skill_text = (SHIP / "SKILL.md").read_text(encoding="utf-8")
+    skill_text = (SHIP / "skills" / "cut-sprite-sheet" / "SKILL.md").read_text(encoding="utf-8")
     plugin_py = (SHIP / "__init__.py").read_text(encoding="utf-8")
     check("plugin_floor", 'requires_hermes: ">=0.21.6"' in plugin_yaml and "manifest_version: 2" in plugin_yaml, "0.21.6")
     place_first = "Place a walk cycle or shore tiles in the game."

@@ -7,10 +7,26 @@ import threading
 import time
 from pathlib import Path
 
+_ATTENDANCE = None
+
+
+def _attendance():
+    global _ATTENDANCE
+    if _ATTENDANCE is None:
+        path = Path(__file__).resolve().parent / "attendance.py"
+        spec = importlib.util.spec_from_file_location("sprite_sheet_attendance", path)
+        if spec is None or spec.loader is None:
+            raise ImportError(path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _ATTENDANCE = module
+    return _ATTENDANCE
+
 INSPECT_DESCRIPTION = (
     "Read a sprite sheet or tileset png grid, frames, defects. "
     "Use it when a 2D game needs the width, height, frame count, and defects of a sprite sheet or a tileset png. "
-    "Pixel art stays on this computer. It does not write files and does not launch Godot or Unity."
+    "Pixel art stays on this computer. It does not write files and does not launch Godot or Unity. "
+    "A pixel-art sprite sheet cutter and a png tileset splitter."
 )
 SLICE_DESCRIPTION = (
     "Cut and slice a sprite sheet or tileset png for 2D. "
@@ -20,7 +36,8 @@ SLICE_DESCRIPTION = (
     "A write shows the project-relative paths once on the approval screen. "
     "A replace keeps a sprite's alignment, pivot, border, fileID, and guid when the name matches. "
     "It names text lines, meta values, and png byte counts it will drop, and writes nothing when it cannot name them. "
-    "Pixel art stays on this computer. Does not launch Godot or Unity."
+    "Pixel art stays on this computer. Does not launch Godot or Unity. "
+    "It can split a png into a sprite sheet."
 )
 PLACE_DESCRIPTION = (
     "Place a walk cycle or shore tiles in the game. "
@@ -29,7 +46,8 @@ PLACE_DESCRIPTION = (
     "Pixels stay on this computer. Music and voice are not created and audio is not sent. "
     "A write shows the project-relative paths once on the approval screen. "
     "A replace names text lines, meta values, and png byte counts it will drop, and writes nothing when it cannot name them. "
-    "Does not launch Godot or Unity."
+    "Does not launch Godot or Unity. "
+    "It places a 2D sprite sheet for a walk cycle."
 )
 _CONTRACT = None
 
@@ -82,6 +100,7 @@ def _bad(key):
     return json.dumps(
         {
             "ok": False,
+            "error_type": "invalid_argument",
             "error": f"missing or invalid {name}.",
             "next": f"Pass {name} as described. Nothing was written.",
             "next_ja": f"{name} を直す。まだ書いていない。",
@@ -289,6 +308,11 @@ def _on_pre_tool_call(tool_name="", args=None, **kwargs):
         payload = _args(args)
         if not _flag(payload, "write", True):
             return None
+        # Hermes checks a stored always line before its unattended refusal.
+        # Block here so that line cannot write the project. Do not keep a preview.
+        reason = _attendance().unattended_reason()
+        if reason:
+            return _attendance().unattended_block(reason)
         preview = _dry_preview(tool_name, payload)
     except Exception:
         return None
@@ -308,6 +332,15 @@ def _on_pre_tool_call(tool_name="", args=None, **kwargs):
 
 def _commit(tool_name, payload, preview, again, ids):
     contract = _contract()
+    reason = _attendance().unattended_reason()
+    if reason:
+        base = preview if isinstance(preview, dict) else {}
+        return _halt(
+            base,
+            _attendance().unattended_block(reason)["message"],
+            "Run this cut from a session where a person can answer. Nothing was written.",
+            nxt_ja="人が答えられる場面で切る。まだ書いていない。",
+        )
     if not preview.get("ok") or not preview.get("approval"):
         return contract.dump_reply(preview)
     key = _stash_key(tool_name, payload, ids)
@@ -340,6 +373,7 @@ def _commit(tool_name, payload, preview, again, ids):
 
 
 def register(ctx) -> None:
+    _attendance().bind_cron_reader(getattr(ctx, "current_cron_execution", None))
     contract = _contract()
 
     def _inspect(args, **_kwargs):
@@ -462,7 +496,7 @@ def register(ctx) -> None:
     )
     ctx.register_skill(
         "cut-sprite-sheet",
-        Path(__file__).resolve().parent / "SKILL.md",
+        Path(__file__).resolve().parent / "skills" / "cut-sprite-sheet" / "SKILL.md",
         description=(
             "Cut a grid png into a sprite sheet or a tileset, or place a walk cycle or shore tiles, for a 2D game in Godot or Unity. "
             "tool_search in English for inspect_grid, slice_grid, or place_kit before using web_search."

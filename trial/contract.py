@@ -337,9 +337,8 @@ def suggest_cell(im) -> tuple[int, int]:
 
 
 def _base_reply(source: str, as_of: int, w: int, h: int, cell_w: int, cell_h: int) -> dict:
-    return {
+    reply = {
         "ok": False,
-        "error": "",
         "next": "",
         "next_ja": "",
         "truncated": False,
@@ -363,6 +362,8 @@ def _base_reply(source: str, as_of: int, w: int, h: int, cell_w: int, cell_h: in
         "extrude_px": 0,
         "paths": [],
     }
+    reply["error"] = ""
+    return reply
 
 
 def _order_rects(rects, cols: int, rows: int, origin: str):

@@ -280,7 +280,13 @@ def _gate(hermes, monkeypatch, env, project):
 
 @pytest.mark.parametrize(
     "env",
-    [{"HERMES_CRON_SESSION": "1"}, {"HERMES_SINGLE_QUERY_SESSION": "1"}, {"HERMES_SESSION_PLATFORM": "webhook"}],
+    [
+        {"HERMES_CRON_SESSION": "1"},
+        {"HERMES_SINGLE_QUERY_SESSION": "1"},
+        {"HERMES_SESSION_PLATFORM": "webhook"},
+        {"HERMES_SESSION_PLATFORM": "api_server"},
+        {"HERMES_SESSION_PLATFORM": "msgraph_webhook"},
+    ],
 )
 def test_cron_single_query_and_unattended_are_refused(hermes, monkeypatch, tmp_path, env):
     project = _project(tmp_path)
@@ -424,7 +430,8 @@ def test_always_then_single_query_env_writes_nothing(hermes, plugin, monkeypatch
     assert _snapshot(project) == before
 
 
-def test_always_then_webhook_context_writes_nothing(hermes, plugin, monkeypatch, tmp_path):
+@pytest.mark.parametrize("platform", ["webhook", "api_server", "msgraph_webhook"])
+def test_always_then_webhook_context_writes_nothing(hermes, plugin, monkeypatch, tmp_path, platform):
     monkeypatch.setenv("HERMES_INTERACTIVE", "1")
     monkeypatch.delenv("HERMES_CRON_SESSION", raising=False)
     monkeypatch.delenv("HERMES_SESSION_PLATFORM", raising=False)
@@ -435,7 +442,7 @@ def test_always_then_webhook_context_writes_nothing(hermes, plugin, monkeypatch,
     before = _snapshot(project)
     from gateway.session_context import _VAR_MAP
 
-    token = _VAR_MAP["HERMES_SESSION_PLATFORM"].set("webhook")
+    token = _VAR_MAP["HERMES_SESSION_PLATFORM"].set(platform)
     try:
         block, _modified = hermes._dispatch_pre_tool_call_hooks("slice_grid", args, **ids)
         if not block:

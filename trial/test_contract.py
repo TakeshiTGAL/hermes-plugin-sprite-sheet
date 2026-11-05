@@ -1528,7 +1528,7 @@ def main() -> None:
     readme = DESIGN[DESIGN.index("## What goes in the README") :]
     for item in ("fix_alpha_border", "spriteID", "peering", "--probe", "spriteExtrude", "uid", "32", "Full Rect", "internalIDToNameTable"):
         check(f"readme_{item}", item in readme, item)
-    for banned in ("この本", "this book", "takeshi" + "tgal", ".har" + "ness", "loop.wav", "Set cell to 16 or 32", "pip install"):
+    for banned in ("この" + "本", "this" + " book", "takeshi" + "tgal", ".har" + "ness", "loop.wav", "Set cell to 16 or 32", "pip install"):
         check(f"banned_{banned}", banned not in DESIGN, "absent")
     for key, sample in SAMPLES.items():
         if sample["error"]:
